@@ -576,25 +576,23 @@ async function downloadFirstExport(page) {
       const text = await frame
         .evaluate(() => {
           const rows = [...document.querySelectorAll("tr")].filter((row) => row.querySelectorAll("td").length > 1);
-          const row = rows[0];
-          return row ? (row.innerText || "").replace(/\s+/g, " ").trim().slice(0, 180) : "";
+          const finished = rows.find((row) => /Finished/i.test(row.innerText || "") && !/Downloaded/i.test(row.innerText || ""));
+          const top = rows[0];
+          const show = finished || top;
+          return show ? (show.innerText || "").replace(/\s+/g, " ").trim().slice(0, 180) : "";
         })
         .catch(() => "");
       if (!text || !/Finished|Processing|Exporting|Generating|Success/i.test(text)) continue;
-      if (/Downloaded/i.test(text)) continue;
-      const ready = /Finished|Success/i.test(text);
+      const ready = /Finished/i.test(text) && !/Downloaded/i.test(text);
       if (!ready) sawPending = true;
-      if (text === lastText && ready) finishedStreak += 1;
-      else finishedStreak = ready ? 1 : 0;
       if (text !== lastText) console.log("export row", text);
       lastText = text;
-      if (!ready || (!sawPending && finishedStreak < 2)) break;
+      if (!ready) break;
       const handle = await frame
         .evaluateHandle(() => {
           const rows = [...document.querySelectorAll("tr")].filter((row) => row.querySelectorAll("td").length > 1);
-          const row = rows[0];
-          const rowText = row ? (row.innerText || "") : "";
-          if (!row || !/Finished|Success/i.test(rowText) || /Downloaded/i.test(rowText)) return null;
+          const row = rows.find((item) => /Finished/i.test(item.innerText || "") && !/Downloaded/i.test(item.innerText || ""));
+          if (!row) return null;
           const icons = [...row.querySelectorAll("a, button, i, span, svg")].filter((node) => {
             const box = node.getBoundingClientRect();
             return box.width >= 8 && box.height >= 8;
