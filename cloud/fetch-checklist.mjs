@@ -112,9 +112,9 @@ async function labelVisible(page, label) {
     const found = await frame
       .evaluate((wanted) => [...document.querySelectorAll("body *")].some((node) => {
         const text = (node.innerText || "").replace(/\s+/g, " ").trim();
-        if (text !== wanted) return false;
+        if (text !== wanted && text !== `${wanted}:`) return false;
         const box = node.getBoundingClientRect();
-        return box.width >= 8 && box.height >= 8 && box.width <= 220;
+        return box.width >= 8 && box.height >= 8 && box.height <= 48 && box.width <= 800;
       }), label)
       .catch(() => false);
     if (found) return true;
@@ -128,9 +128,10 @@ async function openDropdownByLabel(page, label) {
       .evaluateHandle((wanted) => {
         const textOf = (node) => (node.innerText || "").replace(/\s+/g, " ").trim();
         const labels = [...document.querySelectorAll("label, span, div, td")].filter((node) => {
-          if (textOf(node) !== wanted) return false;
+          const text = textOf(node);
+          if (text !== wanted && text !== `${wanted}:`) return false;
           const box = node.getBoundingClientRect();
-          return box.width >= 20 && box.width <= 180 && box.height >= 10 && box.height <= 36 && node.childElementCount <= 3;
+          return box.width >= 20 && box.width <= 320 && box.height >= 10 && box.height <= 40 && node.childElementCount <= 3;
         });
         labels.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
         const lab = labels[0];
@@ -466,11 +467,13 @@ try {
   await page.waitForTimeout(2500);
 
   let openedFilter = await labelVisible(page, "Task Type");
-  for (let attempt = 0; attempt < 4 && !openedFilter; attempt += 1) {
+  if (!openedFilter) {
     const clickedFunnel = await clickFilterFunnel(page);
-    if (!clickedFunnel) console.log("filter funnel not found", attempt);
-    await page.waitForTimeout(1500);
-    openedFilter = await labelVisible(page, "Task Type");
+    if (!clickedFunnel) console.log("filter funnel not found");
+    for (let attempt = 0; attempt < 8 && !openedFilter; attempt += 1) {
+      await page.waitForTimeout(500);
+      openedFilter = await labelVisible(page, "Task Type");
+    }
   }
   if (!openedFilter) {
     await dumpToolbar(page);
