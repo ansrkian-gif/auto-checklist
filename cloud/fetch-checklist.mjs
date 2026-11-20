@@ -693,7 +693,7 @@ function rowIsNewExport(rowText) {
   return Math.abs(Date.now() - rowTime) < 20 * 60 * 1000;
 }
 
-async function downloadFirstExport(page) {
+async function downloadFirstExport(page, knownKey = "") {
   let savedFromResponse = false;
   page.context().on("response", async (response) => {
     const disposition = response.headers()["content-disposition"] || "";
@@ -707,8 +707,9 @@ async function downloadFirstExport(page) {
   let lastText = "";
   let clicked = false;
   let downloadPromise = null;
-  let targetKey = "";
-  for (let attempt = 0; attempt < 360 && !clicked; attempt += 1) {
+  let targetKey = knownKey;
+  const limit = knownKey ? 40 : 360;
+  for (let attempt = 0; attempt < limit && !clicked; attempt += 1) {
     let refreshed = false;
     for (const frame of await everyFrame(page)) {
       const handle = await frame
@@ -767,10 +768,25 @@ async function downloadFirstExport(page) {
       const row = frame.locator("tr").filter({ hasText: targetKey }).first();
       if ((await row.count().catch(() => 0)) === 0) continue;
       const rowText = (await row.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
-      if (rowText !== lastText) console.log("export row", rowText.slice(0, 180));
+      const processing = /processing/i.test(rowText);
+      const ready = /Finished/i.test(rowText) || (/eyJ/.test(rowText) && !processing);
+      if (rowText !== lastText) console.log("export row", targetKey, processing ? "processing" : ready ? "ready" : "waiting");
       lastText = rowText;
-      if (/Processing/i.test(rowText) || /Downloaded/i.test(rowText) || !/Finished/i.test(rowText)) continue;
-      const icons = row.locator("td").last().locator("i, svg, a, button");
+      if (processing || /Downloaded/i.test(rowText) || !ready) continue;
+      await frame.evaluate((key) => {
+        document.querySelectorAll("[data-ows-dl]").forEach((node) => node.removeAttribute("data-ows-dl"));
+        const dataRow = [...document.querySelectorAll("tr")].find((tr) => (tr.innerText || "").includes(key));
+        if (!dataRow) return;
+        const top = dataRow.getBoundingClientRect().top;
+        const aligned = [...document.querySelectorAll("i, svg, a, button")].filter((node) => {
+          const rec = node.getBoundingClientRect();
+          if (rec.width < 8 || rec.height < 8 || rec.width > 40 || rec.height > 40) return false;
+          return Math.abs(rec.top - top) < 22;
+        });
+        aligned.sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left);
+        aligned.slice(0, 4).forEach((node, index) => node.setAttribute("data-ows-dl", String(index)));
+      }, targetKey).catch(() => {});
+      const icons = frame.locator("[data-ows-dl]");
       const iconCount = await icons.count().catch(() => 0);
       for (let index = 0; index < iconCount; index += 1) {
         const icon = icons.nth(index);
@@ -822,6 +838,17 @@ try {
   }
   await shot(page, "01-after-login.png");
 
+  const wantedExport = process.env.OWS_CFA || "";
+  if (wantedExport) {
+    await page.goto(`${base}/adc-web/ui/standalone/index-plus.html#/spl2/Checklist/checklist_service/mchecklist_export_file_attach_grid`, {
+      waitUntil: "domcontentloaded",
+      timeout: 120000,
+    });
+    await page.waitForTimeout(4000);
+    const saved = await downloadFirstExport(page, wantedExport);
+    if (!saved) throw new Error("Checklist download did not start");
+    fs.writeFileSync(path.join(__dirname, "window.txt"), `${from}\n${to}\n${wantedExport}\n`);
+  } else {
   const opened = Date.now();
   let foundTasks = false;
   while (Date.now() - opened < 90000) {
@@ -929,6 +956,7 @@ try {
   const saved = await downloadFirstExport(page);
   if (!saved) throw new Error("Checklist download did not start");
   fs.writeFileSync(path.join(__dirname, "window.txt"), `${from}\n${to}\n`);
+  }
 } catch (error) {
   await shot(page, "error.png");
   console.error(error);

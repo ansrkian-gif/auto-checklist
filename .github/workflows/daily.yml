@@ -15,6 +15,10 @@ on:
         description: Publish the phone page
         required: false
         default: "true"
+      cfa:
+        description: Download this finished export instead of creating one
+        required: false
+        default: ""
   schedule:
     - cron: "30 3 * * *"
 
@@ -42,6 +46,7 @@ jobs:
           OWS_PASS: ${{ secrets.OWS_PASS }}
           OWS_FROM: ${{ inputs.from }}
           OWS_TO: ${{ inputs.to }}
+          OWS_CFA: ${{ inputs.cfa }}
         run: node fetch-checklist.mjs
       - name: Restore earlier days
         run: |
