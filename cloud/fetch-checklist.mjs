@@ -98,8 +98,8 @@ async function openSelect(page, label) {
         const labels = [...document.querySelectorAll("label, .el-form-item__label, .ant-form-item-label, span, div")];
         const lab = labels.find((node) => (node.innerText || "").trim().replace(/\s+/g, " ") === wanted);
         if (!lab) return "";
-        const item = lab.closest(".el-form-item, .ant-form-item, .el-col, td, div") || lab.parentElement;
-        const opener = item && item.querySelector(".el-select, .ant-select, input");
+        const item = lab.closest(".el-form-item, .ant-form-item, .el-col, td, tr") || lab.parentElement;
+        const opener = item && item.querySelector(".el-select, .ant-select, [role='combobox'], select, input, .x-form-trigger");
         if (!opener) return "";
         opener.click();
         return "ok";
@@ -108,6 +108,136 @@ async function openSelect(page, label) {
     if (opened) return true;
   }
   return false;
+}
+
+async function clickFilterFunnel(page) {
+  for (const frame of await frames(page)) {
+    const handle = await frame
+      .evaluateHandle(() => {
+        const textOf = (node) => (node.innerText || "").replace(/\s+/g, " ").trim();
+        const boxOf = (node) => node.getBoundingClientRect();
+        const shown = (node) => {
+          const box = boxOf(node);
+          if (box.width < 8 || box.height < 8) return false;
+          const style = getComputedStyle(node);
+          return style.visibility !== "hidden" && style.display !== "none";
+        };
+        const templates = [...document.querySelectorAll("body *")].filter((node) => {
+          if (textOf(node) !== "Template") return false;
+          const box = boxOf(node);
+          return box.width >= 8 && box.width <= 220 && box.height >= 8 && box.height <= 64;
+        });
+        templates.sort((a, b) => boxOf(a).width - boxOf(b).width);
+        const template = templates[0];
+        if (!template) return null;
+        const band = boxOf(template);
+        const marked = [...document.querySelectorAll("body *")].filter((node) => {
+          if (!shown(node)) return false;
+          const box = boxOf(node);
+          if (box.top > 220 || box.width > 72 || box.height > 72) return false;
+          const mark = `${node.getAttribute("title") || ""} ${node.getAttribute("aria-label") || ""} ${node.className || ""} ${node.id || ""}`;
+          if (!/filter|funnel/i.test(String(mark))) return false;
+          if (/^filter$/i.test(textOf(node))) return false;
+          return true;
+        });
+        marked.sort((a, b) => boxOf(a).width - boxOf(b).width);
+        const icons = [...document.querySelectorAll("i, svg, img, button, a, span, div")].filter((node) => {
+          if (node === template || template.contains(node) || node.contains(template)) return false;
+          if (!shown(node)) return false;
+          const box = boxOf(node);
+          if (box.width < 10 || box.width > 56 || box.height < 10 || box.height > 56) return false;
+          const cy = box.top + box.height / 2;
+          if (cy < band.top - 8 || cy > band.bottom + 8) return false;
+          if (box.right > band.left + 4) return false;
+          if (band.left - box.right > 40) return false;
+          return true;
+        });
+        icons.sort((a, b) => {
+          const gapA = band.left - boxOf(a).right;
+          const gapB = band.left - boxOf(b).right;
+          if (Math.abs(gapA - gapB) > 3) return gapA - gapB;
+          return boxOf(b).width - boxOf(a).width;
+        });
+        const chosen = marked[0] || icons[0];
+        if (!chosen) return null;
+        const box = boxOf(chosen);
+        chosen.setAttribute("data-ows-funnel", "1");
+        chosen.setAttribute("data-ows-funnel-info", JSON.stringify({
+          tag: chosen.tagName,
+          cls: String(chosen.className && chosen.className.baseVal ? chosen.className.baseVal : chosen.className).slice(0, 120),
+          title: chosen.getAttribute("title") || "",
+          x: Math.round(box.left),
+          y: Math.round(box.top),
+          w: Math.round(box.width),
+          h: Math.round(box.height),
+        }));
+        return chosen;
+      })
+      .catch(() => null);
+    const element = handle && handle.asElement ? handle.asElement() : null;
+    if (!element) continue;
+    const info = await element.getAttribute("data-ows-funnel-info").catch(() => "");
+    await element.click({ timeout: 5000 }).catch((error) => console.log("funnel click error", error.message));
+    console.log("clicked filter funnel", info || "element");
+    return true;
+  }
+  return false;
+}
+
+async function clickApplyFilter(page) {
+  for (const frame of await frames(page)) {
+    const clicked = await frame
+      .evaluate(() => {
+        const nodes = [...document.querySelectorAll("button, .el-button, .ant-btn, a, span, div")];
+        const hits = nodes.filter((node) => {
+          const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+          if (text !== "Filter") return false;
+          const box = node.getBoundingClientRect();
+          if (box.width < 8 || box.height < 8 || box.width > 220) return false;
+          const parentText = node.parentElement ? (node.parentElement.innerText || "").slice(0, 120) : "";
+          if (/Filter Options/i.test(parentText)) return false;
+          return true;
+        });
+        const buttons = hits.filter((node) => /button/i.test(node.tagName) || /btn|button/i.test(String(node.className)));
+        const pool = buttons.length ? buttons : hits;
+        pool.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+        const el = pool[0];
+        if (!el) return "";
+        el.click();
+        const box = el.getBoundingClientRect();
+        return `Filter ${Math.round(box.left)},${Math.round(box.top)}`;
+      })
+      .catch(() => "");
+    if (clicked) {
+      console.log("clicked", clicked);
+      return true;
+    }
+  }
+  return false;
+}
+
+async function dumpToolbar(page) {
+  const lines = [];
+  for (const frame of await frames(page)) {
+    const rows = await frame
+      .evaluate(() => {
+        return [...document.querySelectorAll("body *")]
+          .filter((node) => {
+            const box = node.getBoundingClientRect();
+            return box.top >= 30 && box.top < 180 && box.height >= 8 && box.height <= 48 && box.width >= 8 && box.width <= 240 && node.childElementCount <= 2;
+          })
+          .slice(0, 60)
+          .map((node) => {
+            const box = node.getBoundingClientRect();
+            const text = (node.innerText || "").replace(/\s+/g, " ").trim().slice(0, 40);
+            return `${node.tagName} ${Math.round(box.left)},${Math.round(box.top)} ${Math.round(box.width)}x${Math.round(box.height)} ${String(node.className).slice(0, 70)} | ${text}`;
+          });
+      })
+      .catch(() => []);
+    lines.push(`frame ${frame.url()}`);
+    lines.push(...rows);
+  }
+  fs.writeFileSync(path.join(__dirname, "toolbar.txt"), lines.join("\n"));
 }
 
 async function fillByLabel(page, label, value) {
@@ -259,44 +389,13 @@ try {
 
   let openedFilter = false;
   for (let attempt = 0; attempt < 4 && !openedFilter; attempt += 1) {
-    let clickedFunnel = false;
-    for (const frame of await frames(page)) {
-      const point = await frame
-        .evaluate(() => {
-          const candidates = [...document.querySelectorAll("body *")].filter((node) => {
-            const text = (node.innerText || "").replace(/\s+/g, " ").trim();
-            if (text !== "Template") return false;
-            const box = node.getBoundingClientRect();
-            return box.width >= 8 && box.width <= 180 && box.height >= 8 && box.height <= 60;
-          });
-          candidates.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
-          const template = candidates[0];
-          if (!template) return null;
-          const band = template.getBoundingClientRect();
-          return { x: band.left - 18, y: band.top + band.height / 2 };
-        })
-        .catch(() => null);
-      if (!point) continue;
-      let originX = 0;
-      let originY = 0;
-      if (frame !== page.mainFrame()) {
-        const owner = await frame.frameElement().catch(() => null);
-        const ownerBox = owner ? await owner.boundingBox().catch(() => null) : null;
-        if (ownerBox) {
-          originX = ownerBox.x;
-          originY = ownerBox.y;
-        }
-      }
-      await page.mouse.click(originX + point.x, originY + point.y);
-      console.log("clicked filter funnel", Math.round(originX + point.x), Math.round(originY + point.y));
-      clickedFunnel = true;
-      break;
-    }
-    if (!clickedFunnel) console.log("template label not found", attempt);
+    const clickedFunnel = await clickFilterFunnel(page);
+    if (!clickedFunnel) console.log("filter funnel not found", attempt);
     await page.waitForTimeout(1500);
     openedFilter = await openSelect(page, "Task Type");
   }
   if (!openedFilter) {
+    await dumpToolbar(page);
     await shot(page, "02-no-filter.png");
     throw new Error("Task Type dropdown was not found");
   }
@@ -308,7 +407,7 @@ try {
   await page.waitForTimeout(300);
   await openSelect(page, "Task Status");
   if (!(await chooseOption(page, "Completed"))) throw new Error("Completed option was not found");
-  await page.keyboard.press("Escape").catch(() => {});
+  await clickText(page, /^Title$/);
   await page.waitForTimeout(300);
 
   if (!(await fillByLabel(page, "Title", "OGK Active and Passive"))) throw new Error("Title field was not found");
@@ -316,7 +415,7 @@ try {
   await page.waitForTimeout(500);
   if (!(await fillCriteria(page, criteria))) throw new Error("Extended criteria box was not found");
   console.log("criteria", criteria);
-  if (!(await clickText(page, /^Filter$/))) throw new Error("Filter button was not found");
+  if (!(await clickApplyFilter(page))) throw new Error("Filter button was not found");
   await page.waitForTimeout(4000);
   await shot(page, "02-filtered.png");
 
