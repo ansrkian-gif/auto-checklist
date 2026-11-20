@@ -69,10 +69,12 @@ async function chooseOption(page, label) {
     for (const frame of await frames(page)) {
       const handle = await frame
         .evaluateHandle((wanted) => {
-          const nodes = [...document.querySelectorAll("li, span, div, a, label")];
+          const norm = (node) => (node.innerText || "").replace(/\s+/g, " ").trim().toLowerCase();
+          const wantedLower = wanted.toLowerCase();
+          const dropdown = [...document.querySelectorAll(".el-select-dropdown__item")];
+          const nodes = dropdown.length ? dropdown : [...document.querySelectorAll("li, span, div, a, label")];
           const matches = nodes.filter((node) => {
-            const text = (node.innerText || "").replace(/\s+/g, " ").trim();
-            if (text !== wanted) return false;
+            if (norm(node) !== wantedLower) return false;
             const box = node.getBoundingClientRect();
             return box.width >= 8 && box.height >= 8 && box.height < 48 && box.width < 360;
           });
@@ -432,24 +434,47 @@ async function loginIfNeeded(page) {
 }
 
 async function downloadFirstExport(page) {
-  const downloadPromise = page.waitForEvent("download", { timeout: 180000 }).catch(() => null);
-  for (const frame of await frames(page)) {
-    const clicked = await frame
-      .evaluate(() => {
-        const rows = [...document.querySelectorAll("tr")].filter((row) => /Finished/i.test(row.innerText || ""));
-        const row = rows[0];
-        if (!row) return "";
-        const icon = [...row.querySelectorAll("a, button, i, span, svg")].find((node) => {
-          const mark = `${node.className || ""} ${node.getAttribute("title") || ""} ${node.getAttribute("aria-label") || ""}`;
-          return /download/i.test(mark);
-        });
-        if (!icon) return "";
-        icon.click();
-        return "download";
-      })
-      .catch(() => "");
-    if (clicked) break;
+  const downloadPromise = page.waitForEvent("download", { timeout: 300000 }).catch(() => null);
+  let sawPending = false;
+  let finishedStreak = 0;
+  let lastText = "";
+  let clicked = false;
+  for (let attempt = 0; attempt < 40 && !clicked; attempt += 1) {
+    for (const frame of await frames(page)) {
+      const text = await frame
+        .evaluate(() => {
+          const rows = [...document.querySelectorAll("tr")].filter((row) => row.querySelectorAll("td").length > 1);
+          const row = rows[0];
+          return row ? (row.innerText || "").replace(/\s+/g, " ").trim().slice(0, 180) : "";
+        })
+        .catch(() => "");
+      if (!text || !/Finished|Processing|Exporting|Generating|Waiting/i.test(text)) continue;
+      if (!/Finished/i.test(text)) sawPending = true;
+      if (text === lastText && /Finished/i.test(text)) finishedStreak += 1;
+      else finishedStreak = /Finished/i.test(text) ? 1 : 0;
+      lastText = text;
+      console.log("export row", text);
+      if (!/Finished/i.test(text) || (!sawPending && finishedStreak < 2)) break;
+      const handle = await frame
+        .evaluateHandle(() => {
+          const rows = [...document.querySelectorAll("tr")].filter((row) => row.querySelectorAll("td").length > 1);
+          const row = rows[0];
+          if (!row || !/Finished/i.test(row.innerText || "")) return null;
+          return [...row.querySelectorAll("a, button, i, span, svg")].find((node) => {
+            const mark = `${node.className || ""} ${node.getAttribute("title") || ""} ${node.getAttribute("aria-label") || ""}`;
+            return /download/i.test(mark);
+          }) || null;
+        })
+        .catch(() => null);
+      const element = handle && handle.asElement ? handle.asElement() : null;
+      if (!element) break;
+      await element.click({ timeout: 5000 }).catch((error) => console.log("download click error", error.message));
+      clicked = true;
+      break;
+    }
+    if (!clicked) await page.waitForTimeout(3000);
   }
+  if (!clicked) return false;
   await clickDialogButton(page, ["Confirm", "OK"]);
   const download = await downloadPromise;
   if (!download) return false;
