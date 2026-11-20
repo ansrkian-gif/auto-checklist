@@ -65,28 +65,112 @@ async function clickText(page, pattern) {
 }
 
 async function chooseOption(page, label) {
-  for (let attempt = 0; attempt < 6; attempt += 1) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
     for (const frame of await frames(page)) {
-      const hit = await frame
-        .evaluate((wanted) => {
-          const nodes = [...document.querySelectorAll(".el-select-dropdown__item, .ant-select-item-option, li, span, div")];
-          const el = nodes.find((node) => {
-            const text = (node.innerText || "").trim();
+      const handle = await frame
+        .evaluateHandle((wanted) => {
+          const nodes = [...document.querySelectorAll("li, span, div, a, label")];
+          const matches = nodes.filter((node) => {
+            const text = (node.innerText || "").replace(/\s+/g, " ").trim();
             if (text !== wanted) return false;
             const box = node.getBoundingClientRect();
-            return box.width >= 8 && box.height >= 8 && box.height < 60;
+            return box.width >= 8 && box.height >= 8 && box.height < 48 && box.width < 360;
           });
-          if (!el) return "";
-          el.click();
-          return "ok";
+          matches.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+          return matches[0] || null;
         }, label)
-        .catch(() => "");
-      if (hit) {
-        console.log("option", label);
-        return true;
-      }
+        .catch(() => null);
+      const element = handle && handle.asElement ? handle.asElement() : null;
+      if (!element) continue;
+      await element.click({ timeout: 5000 }).catch((error) => console.log("option click error", error.message));
+      console.log("option", label);
+      return true;
     }
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
+  }
+  const seen = [];
+  for (const frame of await frames(page)) {
+    const rows = await frame
+      .evaluate(() => [...document.querySelectorAll("li, span, div, a")]
+        .filter((node) => {
+          const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+          const box = node.getBoundingClientRect();
+          return text && text.length <= 40 && node.childElementCount === 0 && box.height >= 10 && box.height <= 36 && box.width >= 8;
+        })
+        .slice(0, 50)
+        .map((node) => (node.innerText || "").replace(/\s+/g, " ").trim()))
+      .catch(() => []);
+    seen.push(...rows);
+  }
+  fs.writeFileSync(path.join(__dirname, "options.txt"), seen.join("\n"));
+  console.log("visible options", seen.slice(0, 30).join(" | "));
+  return false;
+}
+
+async function labelVisible(page, label) {
+  for (const frame of await frames(page)) {
+    const found = await frame
+      .evaluate((wanted) => [...document.querySelectorAll("body *")].some((node) => {
+        const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+        if (text !== wanted) return false;
+        const box = node.getBoundingClientRect();
+        return box.width >= 8 && box.height >= 8 && box.width <= 220;
+      }), label)
+      .catch(() => false);
+    if (found) return true;
+  }
+  return false;
+}
+
+async function openDropdownByLabel(page, label) {
+  for (const frame of await frames(page)) {
+    const handle = await frame
+      .evaluateHandle((wanted) => {
+        const textOf = (node) => (node.innerText || "").replace(/\s+/g, " ").trim();
+        const labels = [...document.querySelectorAll("label, span, div, td")].filter((node) => {
+          if (textOf(node) !== wanted) return false;
+          const box = node.getBoundingClientRect();
+          return box.width >= 20 && box.width <= 180 && box.height >= 10 && box.height <= 36 && node.childElementCount <= 3;
+        });
+        labels.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+        const lab = labels[0];
+        if (!lab) return null;
+        const band = lab.getBoundingClientRect();
+        const mid = band.top + band.height / 2;
+        const candidates = [...document.querySelectorAll("div, span, input, select")].filter((node) => {
+          const box = node.getBoundingClientRect();
+          if (box.width < 80 || box.width > 460 || box.height < 18 || box.height > 42) return false;
+          const cy = box.top + box.height / 2;
+          if (Math.abs(cy - mid) > 16) return false;
+          if (box.left < band.right - 8) return false;
+          const style = getComputedStyle(node);
+          return style.visibility !== "hidden" && style.display !== "none";
+        });
+        candidates.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+        return candidates[0] || null;
+      }, label)
+      .catch(() => null);
+    const element = handle && handle.asElement ? handle.asElement() : null;
+    if (!element) continue;
+    const box = await element.boundingBox();
+    if (!box) continue;
+    await element.click({
+      position: { x: Math.max(8, box.width - 16), y: Math.max(8, box.height / 2) },
+      timeout: 5000,
+    });
+    console.log("opened", label, Math.round(box.x), Math.round(box.y), Math.round(box.width));
+    return true;
+  }
+  return false;
+}
+
+async function fillPlaceholder(page, placeholder, value) {
+  for (const frame of await frames(page)) {
+    const field = frame.locator(`input[placeholder="${placeholder}"]`).first();
+    if (!(await field.isVisible().catch(() => false))) continue;
+    await field.fill(value);
+    console.log("filled", placeholder);
+    return true;
   }
   return false;
 }
@@ -267,21 +351,15 @@ async function fillByLabel(page, label, value) {
 
 async function fillCriteria(page, text) {
   for (const frame of await frames(page)) {
-    const filled = await frame
-      .evaluate((value) => {
-        const box = [...document.querySelectorAll("textarea")].find((node) => {
-          const rec = node.getBoundingClientRect();
-          return rec.width > 40 && rec.height > 10;
-        });
-        if (!box) return "";
-        box.focus();
-        box.value = value;
-        box.dispatchEvent(new Event("input", { bubbles: true }));
-        box.dispatchEvent(new Event("change", { bubbles: true }));
-        return "ok";
-      }, text)
-      .catch(() => "");
-    if (filled) return true;
+    const boxes = frame.locator("textarea");
+    const count = await boxes.count().catch(() => 0);
+    for (let index = 0; index < count; index += 1) {
+      const box = boxes.nth(index);
+      if (!(await box.isVisible().catch(() => false))) continue;
+      await box.fill(text);
+      console.log("filled criteria");
+      return true;
+    }
   }
   return false;
 }
@@ -387,30 +465,35 @@ try {
   }
   await page.waitForTimeout(2500);
 
-  let openedFilter = false;
+  let openedFilter = await labelVisible(page, "Task Type");
   for (let attempt = 0; attempt < 4 && !openedFilter; attempt += 1) {
     const clickedFunnel = await clickFilterFunnel(page);
     if (!clickedFunnel) console.log("filter funnel not found", attempt);
     await page.waitForTimeout(1500);
-    openedFilter = await openSelect(page, "Task Type");
+    openedFilter = await labelVisible(page, "Task Type");
   }
   if (!openedFilter) {
     await dumpToolbar(page);
     await shot(page, "02-no-filter.png");
     throw new Error("Task Type dropdown was not found");
   }
+  if (!(await openDropdownByLabel(page, "Task Type"))) throw new Error("Task Type dropdown was not found");
+  await page.waitForTimeout(600);
   if (!(await chooseOption(page, "PM"))) throw new Error("PM option was not found");
   await page.waitForTimeout(400);
 
-  if (!(await openSelect(page, "Task Status"))) throw new Error("Task Status dropdown was not found");
+  if (!(await openDropdownByLabel(page, "Task Status"))) throw new Error("Task Status dropdown was not found");
+  await page.waitForTimeout(600);
   if (!(await chooseOption(page, "Closed"))) throw new Error("Closed option was not found");
   await page.waitForTimeout(300);
-  await openSelect(page, "Task Status");
-  if (!(await chooseOption(page, "Completed"))) throw new Error("Completed option was not found");
-  await clickText(page, /^Title$/);
+  if (!(await chooseOption(page, "Completed"))) {
+    await openDropdownByLabel(page, "Task Status");
+    await page.waitForTimeout(600);
+    if (!(await chooseOption(page, "Completed"))) throw new Error("Completed option was not found");
+  }
   await page.waitForTimeout(300);
 
-  if (!(await fillByLabel(page, "Title", "OGK Active and Passive"))) throw new Error("Title field was not found");
+  if (!(await fillPlaceholder(page, "Title", "OGK Active and Passive"))) throw new Error("Title field was not found");
   if (!(await clickText(page, /^More$/))) throw new Error("More was not found");
   await page.waitForTimeout(500);
   if (!(await fillCriteria(page, criteria))) throw new Error("Extended criteria box was not found");
