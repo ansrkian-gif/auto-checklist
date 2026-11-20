@@ -566,6 +566,14 @@ async function dialogText(page) {
   return "";
 }
 
+function rowIsNewExport(rowText) {
+  const stamp = rowText.match(/20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/);
+  if (!stamp) return false;
+  const rowTime = Date.parse(`${stamp[0].replace(" ", "T")}+03:00`);
+  if (Number.isNaN(rowTime)) return false;
+  return Math.abs(Date.now() - rowTime) < 20 * 60 * 1000;
+}
+
 async function downloadFirstExport(page) {
   let savedFromResponse = false;
   page.context().on("response", async (response) => {
@@ -577,26 +585,41 @@ async function downloadFirstExport(page) {
     savedFromResponse = true;
     console.log("saved response", body.length, disposition.slice(0, 80));
   });
-  let sawPending = false;
-  let finishedStreak = 0;
   let lastText = "";
   let clicked = false;
   let downloadPromise = null;
-  for (let attempt = 0; attempt < 200 && !clicked; attempt += 1) {
-    if (attempt % 6 === 0) {
-      for (const frame of await everyFrame(page)) {
-        await frame
-          .evaluate(() => {
-            const button = [...document.querySelectorAll("button, span, a")].find((node) => {
-              if ((node.innerText || "").replace(/\s+/g, " ").trim() !== "Search") return false;
-              const parent = node.closest("form, header, div") || node.parentElement;
-              return parent && /Primary Key|Attach|Operator/i.test(parent.innerText || "");
-            });
-            if (button) button.click();
-          })
-          .catch(() => {});
-      }
-      await page.waitForTimeout(1000);
+  let targetKey = "";
+  for (let attempt = 0; attempt < 360 && !clicked; attempt += 1) {
+    let refreshed = false;
+    for (const frame of await everyFrame(page)) {
+      const handle = await frame
+        .evaluateHandle(() => {
+          const buttons = [...document.querySelectorAll("button, a, span")].filter((node) => {
+            const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+            if (text !== "Search") return false;
+            const box = node.getBoundingClientRect();
+            if (box.width < 8 || box.height < 8 || box.height > 48) return false;
+            let parent = node.parentElement;
+            for (let depth = 0; depth < 6 && parent; depth += 1) {
+              const around = (parent.innerText || "").slice(0, 500);
+              if (/Primary Key/.test(around) && /Operator/.test(around)) return true;
+              parent = parent.parentElement;
+            }
+            return false;
+          });
+          buttons.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+          return buttons[0] || null;
+        })
+        .catch(() => null);
+      const element = handle && handle.asElement ? handle.asElement() : null;
+      if (!element) continue;
+      await element.click({ timeout: 5000 }).catch((error) => console.log("refresh click", error.message));
+      refreshed = true;
+      break;
+    }
+    if (refreshed) {
+      console.log("refreshed export list");
+      await page.waitForTimeout(1500);
     }
     for (const frame of await everyFrame(page)) {
       if (attempt === 0 || attempt === 2) {
@@ -605,12 +628,29 @@ async function downloadFirstExport(page) {
           .catch((error) => error.message);
         console.log("frame", frame.url().slice(0, 140), snippet);
       }
-      const row = frame.locator("tr").filter({ hasText: /Finished/ }).first();
+      const top = frame.locator("tr").filter({ hasText: /CFA-\d{8}-\d+/ }).first();
+      if ((await top.count().catch(() => 0)) === 0) continue;
+      const topText = (await top.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+      const topKey = (topText.match(/CFA-\d{8}-\d+/) || [])[0] || "";
+      if (!targetKey) {
+        if (/Processing/i.test(topText) && topKey) {
+          targetKey = topKey;
+          console.log("waiting for new export", targetKey);
+        } else if (/Finished/i.test(topText) && rowIsNewExport(topText)) {
+          targetKey = topKey;
+          console.log("new export already finished", targetKey);
+        } else if (topText !== lastText) {
+          console.log("top export is older", topKey, topText.slice(0, 120));
+          lastText = topText;
+        }
+        continue;
+      }
+      const row = frame.locator("tr").filter({ hasText: targetKey }).first();
       if ((await row.count().catch(() => 0)) === 0) continue;
-      const rowText = await row.innerText().catch(() => "");
-      if (/Downloaded/i.test(rowText)) continue;
-      if (rowText !== lastText) console.log("export row", rowText.replace(/\s+/g, " ").slice(0, 180));
+      const rowText = (await row.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+      if (rowText !== lastText) console.log("export row", rowText.slice(0, 180));
       lastText = rowText;
+      if (/Processing/i.test(rowText) || /Downloaded/i.test(rowText) || !/Finished/i.test(rowText)) continue;
       const icons = row.locator("td").last().locator("i, svg, a, button");
       const iconCount = await icons.count().catch(() => 0);
       for (let index = 0; index < iconCount; index += 1) {
