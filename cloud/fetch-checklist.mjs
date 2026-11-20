@@ -551,13 +551,27 @@ async function everyFrame(page) {
 }
 
 async function downloadFirstExport(page) {
-  const downloadPromise = waitForAnyDownload(page.context());
   let sawPending = false;
   let finishedStreak = 0;
   let lastText = "";
   let clicked = false;
-  for (let attempt = 0; attempt < 80 && !clicked; attempt += 1) {
-    if (attempt % 5 === 0) console.log("pages", page.context().pages().map((openPage) => openPage.url()).join(" | "));
+  let downloadPromise = null;
+  for (let attempt = 0; attempt < 200 && !clicked; attempt += 1) {
+    if (attempt % 6 === 0) {
+      for (const frame of await everyFrame(page)) {
+        await frame
+          .evaluate(() => {
+            const button = [...document.querySelectorAll("button, span, a")].find((node) => {
+              if ((node.innerText || "").replace(/\s+/g, " ").trim() !== "Search") return false;
+              const parent = node.closest("form, header, div") || node.parentElement;
+              return parent && /Primary Key|Attach|Operator/i.test(parent.innerText || "");
+            });
+            if (button) button.click();
+          })
+          .catch(() => {});
+      }
+      await page.waitForTimeout(1000);
+    }
     for (const frame of await everyFrame(page)) {
       const text = await frame
         .evaluate(() => {
@@ -566,26 +580,35 @@ async function downloadFirstExport(page) {
           return row ? (row.innerText || "").replace(/\s+/g, " ").trim().slice(0, 180) : "";
         })
         .catch(() => "");
-      if (!text || !/Finished|Processing|Exporting|Generating/i.test(text)) continue;
-      if (!/Finished/i.test(text)) sawPending = true;
-      if (text === lastText && /Finished/i.test(text)) finishedStreak += 1;
-      else finishedStreak = /Finished/i.test(text) ? 1 : 0;
+      if (!text || !/Finished|Processing|Exporting|Generating|Success/i.test(text)) continue;
+      if (/Downloaded/i.test(text)) continue;
+      const ready = /Finished|Success/i.test(text);
+      if (!ready) sawPending = true;
+      if (text === lastText && ready) finishedStreak += 1;
+      else finishedStreak = ready ? 1 : 0;
+      if (text !== lastText) console.log("export row", text);
       lastText = text;
-      console.log("export row", text);
-      if (!/Finished/i.test(text) || (!sawPending && finishedStreak < 2)) break;
+      if (!ready || (!sawPending && finishedStreak < 2)) break;
       const handle = await frame
         .evaluateHandle(() => {
           const rows = [...document.querySelectorAll("tr")].filter((row) => row.querySelectorAll("td").length > 1);
           const row = rows[0];
-          if (!row || !/Finished/i.test(row.innerText || "")) return null;
-          return [...row.querySelectorAll("a, button, i, span, svg")].find((node) => {
+          const rowText = row ? (row.innerText || "") : "";
+          if (!row || !/Finished|Success/i.test(rowText) || /Downloaded/i.test(rowText)) return null;
+          const icons = [...row.querySelectorAll("a, button, i, span, svg")].filter((node) => {
+            const box = node.getBoundingClientRect();
+            return box.width >= 8 && box.height >= 8;
+          });
+          const named = icons.find((node) => {
             const mark = `${node.className || ""} ${node.getAttribute("title") || ""} ${node.getAttribute("aria-label") || ""}`;
             return /download/i.test(mark);
-          }) || null;
+          });
+          return named || icons[icons.length - 1] || null;
         })
         .catch(() => null);
       const element = handle && handle.asElement ? handle.asElement() : null;
       if (!element) break;
+      downloadPromise = waitForAnyDownload(page.context());
       await element.click({ timeout: 5000 }).catch((error) => console.log("download click error", error.message));
       clicked = true;
       break;
