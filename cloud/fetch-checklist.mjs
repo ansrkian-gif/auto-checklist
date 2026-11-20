@@ -483,7 +483,7 @@ async function clickRealText(page, source) {
       .catch(() => null);
     const element = handle && handle.asElement ? handle.asElement() : null;
     if (!element) continue;
-    await element.click({ timeout: 5000 });
+    await element.click({ timeout: 8000, noWaitAfter: true }).catch((error) => console.log("export click", error.message));
     console.log("clicked", source);
     return true;
   }
