@@ -155,11 +155,38 @@ async function openDropdownByLabel(page, label) {
     if (!element) continue;
     const box = await element.boundingBox();
     if (!box) continue;
-    await element.click({
-      position: { x: Math.max(8, box.width - 16), y: Math.max(8, box.height / 2) },
-      timeout: 5000,
-    });
+    const position = { x: Math.max(8, box.width - 16), y: Math.max(8, box.height / 2) };
+    try {
+      await element.click({ position, timeout: 5000 });
+    } catch (error) {
+      console.log("dropdown covered, retrying", label);
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+      await element.click({ position, timeout: 5000, force: true });
+    }
     console.log("opened", label, Math.round(box.x), Math.round(box.y), Math.round(box.width));
+    return true;
+  }
+  return false;
+}
+
+async function closeOpenList(page) {
+  for (const frame of await frames(page)) {
+    const handle = await frame
+      .evaluateHandle(() => {
+        const lab = [...document.querySelectorAll("label, span, div")].find((node) => {
+          const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+          if (text !== "Title" && text !== "Title:") return false;
+          const box = node.getBoundingClientRect();
+          return box.width >= 8 && box.height >= 8 && box.height <= 40 && node.childElementCount <= 2;
+        });
+        return lab || null;
+      })
+      .catch(() => null);
+    const element = handle && handle.asElement ? handle.asElement() : null;
+    if (!element) continue;
+    await element.click({ force: true, timeout: 3000 }).catch(() => {});
+    console.log("closed dropdown");
     return true;
   }
   return false;
@@ -483,6 +510,7 @@ try {
   if (!(await openDropdownByLabel(page, "Task Type"))) throw new Error("Task Type dropdown was not found");
   await page.waitForTimeout(600);
   if (!(await chooseOption(page, "PM"))) throw new Error("PM option was not found");
+  await closeOpenList(page);
   await page.waitForTimeout(400);
 
   if (!(await openDropdownByLabel(page, "Task Status"))) throw new Error("Task Status dropdown was not found");
@@ -494,6 +522,7 @@ try {
     await page.waitForTimeout(600);
     if (!(await chooseOption(page, "Completed"))) throw new Error("Completed option was not found");
   }
+  await closeOpenList(page);
   await page.waitForTimeout(300);
 
   if (!(await fillPlaceholder(page, "Title", "OGK Active and Passive"))) throw new Error("Title field was not found");
