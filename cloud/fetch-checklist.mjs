@@ -573,41 +573,21 @@ async function downloadFirstExport(page) {
       await page.waitForTimeout(1000);
     }
     for (const frame of await everyFrame(page)) {
-      const text = await frame
-        .evaluate(() => {
-          const rows = [...document.querySelectorAll("tr")].filter((row) => row.querySelectorAll("td").length > 1);
-          const finished = rows.find((row) => /Finished/i.test(row.innerText || "") && !/Downloaded/i.test(row.innerText || ""));
-          const top = rows[0];
-          const show = finished || top;
-          return show ? (show.innerText || "").replace(/\s+/g, " ").trim().slice(0, 180) : "";
-        })
-        .catch(() => "");
-      if (!text || !/Finished|Processing|Exporting|Generating|Success/i.test(text)) continue;
-      const ready = /Finished/i.test(text) && !/Downloaded/i.test(text);
-      if (!ready) sawPending = true;
-      if (text !== lastText) console.log("export row", text);
-      lastText = text;
-      if (!ready) break;
-      const handle = await frame
-        .evaluateHandle(() => {
-          const rows = [...document.querySelectorAll("tr")].filter((row) => row.querySelectorAll("td").length > 1);
-          const row = rows.find((item) => /Finished/i.test(item.innerText || "") && !/Downloaded/i.test(item.innerText || ""));
-          if (!row) return null;
-          const icons = [...row.querySelectorAll("a, button, i, span, svg")].filter((node) => {
-            const box = node.getBoundingClientRect();
-            return box.width >= 8 && box.height >= 8;
-          });
-          const named = icons.find((node) => {
-            const mark = `${node.className || ""} ${node.getAttribute("title") || ""} ${node.getAttribute("aria-label") || ""}`;
-            return /download/i.test(mark);
-          });
-          return named || icons[icons.length - 1] || null;
-        })
-        .catch(() => null);
-      const element = handle && handle.asElement ? handle.asElement() : null;
-      if (!element) break;
+      if (attempt === 0 || attempt === 2) {
+        const snippet = await frame
+          .evaluate(() => (document.body && document.body.innerText ? document.body.innerText : "").replace(/\s+/g, " ").slice(0, 180))
+          .catch((error) => error.message);
+        console.log("frame", frame.url().slice(0, 140), snippet);
+      }
+      const row = frame.locator("tr").filter({ hasText: /Finished/ }).first();
+      if ((await row.count().catch(() => 0)) === 0) continue;
+      const rowText = await row.innerText().catch(() => "");
+      if (/Downloaded/i.test(rowText)) continue;
+      if (rowText !== lastText) console.log("export row", rowText.replace(/\s+/g, " ").slice(0, 180));
+      lastText = rowText;
+      const icon = row.locator("a, button, i, svg, span").last();
       downloadPromise = waitForAnyDownload(page.context());
-      await element.click({ timeout: 5000 }).catch((error) => console.log("download click error", error.message));
+      await icon.click({ timeout: 8000, force: true }).catch((error) => console.log("download click error", error.message));
       clicked = true;
       break;
     }
