@@ -442,24 +442,75 @@ async function fillCriteria(page, text) {
 
 async function clickDialogButton(page, names) {
   for (const frame of await frames(page)) {
-    const clicked = await frame
-      .evaluate((wanted) => {
-        const buttons = [...document.querySelectorAll("button, .el-button, .ant-btn")];
-        const el = buttons.find((node) => {
-          const text = (node.innerText || "").trim();
+    const handle = await frame
+      .evaluateHandle((wanted) => {
+        const buttons = [...document.querySelectorAll("button, .el-button, .ant-btn, span")];
+        const matches = buttons.filter((node) => {
+          const text = (node.innerText || "").replace(/\s+/g, " ").trim();
           if (!wanted.includes(text)) return false;
           const box = node.getBoundingClientRect();
-          return box.width >= 8 && box.height >= 8;
+          return box.width >= 8 && box.height >= 8 && box.height <= 60;
         });
-        if (!el) return "";
-        el.click();
-        return (el.innerText || "").trim();
+        matches.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+        return matches[0] || null;
       }, names)
-      .catch(() => "");
-    if (clicked) {
-      console.log("dialog", clicked);
-      return clicked;
+      .catch(() => null);
+    const element = handle && handle.asElement ? handle.asElement() : null;
+    if (!element) continue;
+    const label = await element.innerText().catch(() => "OK");
+    await element.click({ timeout: 5000 }).catch((error) => console.log("dialog click error", error.message));
+    console.log("dialog", label.replace(/\s+/g, " ").trim());
+    return label;
+  }
+  return "";
+}
+
+async function clickRealText(page, source) {
+  for (const frame of await frames(page)) {
+    const handle = await frame
+      .evaluateHandle((pattern) => {
+        const wanted = new RegExp(pattern, "i");
+        const nodes = [...document.querySelectorAll("button, a, span, div")];
+        const matches = nodes.filter((node) => {
+          const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+          if (!text || text.length > 80 || !wanted.test(text)) return false;
+          const box = node.getBoundingClientRect();
+          return box.width >= 8 && box.height >= 8 && box.height <= 48 && box.width <= 280;
+        });
+        matches.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+        return matches[0] || null;
+      }, source)
+      .catch(() => null);
+    const element = handle && handle.asElement ? handle.asElement() : null;
+    if (!element) continue;
+    await element.click({ timeout: 5000 });
+    console.log("clicked", source);
+    return true;
+  }
+  return false;
+}
+
+async function waitForGrid(page) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    for (const frame of await frames(page)) {
+      const state = await frame
+        .evaluate(() => {
+          const text = document.body.innerText || "";
+          if (/PM-\d+/.test(text)) return "rows";
+          if (/No data available/i.test(text)) return "empty";
+          return "";
+        })
+        .catch(() => "");
+      if (state === "rows") {
+        console.log("grid", state);
+        return state;
+      }
+      if (state === "empty" && attempt >= 8) {
+        console.log("grid", state);
+        return state;
+      }
     }
+    await page.waitForTimeout(1000);
   }
   return "";
 }
@@ -626,10 +677,11 @@ try {
   await page.waitForTimeout(4000);
   await shot(page, "02-filtered.png");
 
-  if (!(await clickText(page, /Export Checklist as Excel/))) throw new Error("Export Checklist as Excel was not found");
+  await waitForGrid(page);
+  if (!(await clickRealText(page, "Export Checklist as Excel"))) throw new Error("Export Checklist as Excel was not found");
   let confirmed = 0;
   let quiet = 0;
-  for (let i = 0; i < 30 && quiet < 4; i += 1) {
+  for (let i = 0; i < 40 && (confirmed === 0 ? i < 20 : quiet < 4); i += 1) {
     const button = await clickDialogButton(page, ["OK", "Confirm", "Yes"]);
     if (button) {
       confirmed += 1;
@@ -638,6 +690,20 @@ try {
       continue;
     }
     quiet += 1;
+    if (confirmed === 0 && i % 3 === 0) {
+      for (const frame of await frames(page)) {
+        const note = await frame
+          .evaluate(() => {
+            const box = [...document.querySelectorAll(".el-message-box, .el-dialog, [role='dialog']")].find((node) => {
+              const rec = node.getBoundingClientRect();
+              return rec.width > 40 && rec.height > 40;
+            });
+            return box ? (box.innerText || "").replace(/\s+/g, " ").trim().slice(0, 180) : "";
+          })
+          .catch(() => "");
+        if (note) console.log("dialog text", note);
+      }
+    }
     await page.waitForTimeout(1000);
   }
   console.log("export confirms", confirmed);
