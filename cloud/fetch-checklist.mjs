@@ -479,14 +479,35 @@ async function loginIfNeeded(page) {
   return true;
 }
 
+function waitForAnyDownload(context) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), 480000);
+    const attach = (openPage) => {
+      openPage.waitForEvent("download", { timeout: 480000 }).then((download) => {
+        clearTimeout(timer);
+        resolve(download);
+      }).catch(() => {});
+    };
+    for (const openPage of context.pages()) attach(openPage);
+    context.on("page", attach);
+  });
+}
+
+async function everyFrame(page) {
+  const found = [];
+  for (const openPage of page.context().pages()) found.push(...openPage.frames());
+  return found;
+}
+
 async function downloadFirstExport(page) {
-  const downloadPromise = page.waitForEvent("download", { timeout: 300000 }).catch(() => null);
+  const downloadPromise = waitForAnyDownload(page.context());
   let sawPending = false;
   let finishedStreak = 0;
   let lastText = "";
   let clicked = false;
-  for (let attempt = 0; attempt < 40 && !clicked; attempt += 1) {
-    for (const frame of await frames(page)) {
+  for (let attempt = 0; attempt < 80 && !clicked; attempt += 1) {
+    if (attempt % 5 === 0) console.log("pages", page.context().pages().map((openPage) => openPage.url()).join(" | "));
+    for (const frame of await everyFrame(page)) {
       const text = await frame
         .evaluate(() => {
           const rows = [...document.querySelectorAll("tr")].filter((row) => row.querySelectorAll("td").length > 1);
@@ -494,7 +515,7 @@ async function downloadFirstExport(page) {
           return row ? (row.innerText || "").replace(/\s+/g, " ").trim().slice(0, 180) : "";
         })
         .catch(() => "");
-      if (!text || !/Finished|Processing|Exporting|Generating|Waiting/i.test(text)) continue;
+      if (!text || !/Finished|Processing|Exporting|Generating/i.test(text)) continue;
       if (!/Finished/i.test(text)) sawPending = true;
       if (text === lastText && /Finished/i.test(text)) finishedStreak += 1;
       else finishedStreak = /Finished/i.test(text) ? 1 : 0;
@@ -606,11 +627,20 @@ try {
   await shot(page, "02-filtered.png");
 
   if (!(await clickText(page, /Export Checklist as Excel/))) throw new Error("Export Checklist as Excel was not found");
-  for (let i = 0; i < 4; i += 1) {
-    const button = await clickDialogButton(page, ["OK", "Confirm"]);
-    if (!button) break;
-    await page.waitForTimeout(1500);
+  let confirmed = 0;
+  let quiet = 0;
+  for (let i = 0; i < 30 && quiet < 4; i += 1) {
+    const button = await clickDialogButton(page, ["OK", "Confirm", "Yes"]);
+    if (button) {
+      confirmed += 1;
+      quiet = 0;
+      await page.waitForTimeout(1200);
+      continue;
+    }
+    quiet += 1;
+    await page.waitForTimeout(1000);
   }
+  console.log("export confirms", confirmed);
   await page.waitForTimeout(2000);
   await shot(page, "03-export.png");
 
