@@ -69,22 +69,35 @@ async function chooseOption(page, label) {
     for (const frame of await frames(page)) {
       const handle = await frame
         .evaluateHandle((wanted) => {
-          const norm = (node) => (node.innerText || "").replace(/\s+/g, " ").trim().toLowerCase();
+          const labelOf = (node) => {
+            const title = (node.getAttribute("title") || "").replace(/\s+/g, " ").trim().toLowerCase();
+            const text = (node.innerText || node.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+            return { title, text };
+          };
           const wantedLower = wanted.toLowerCase();
-          const dropdown = [...document.querySelectorAll(".el-select-dropdown__item")];
+          const matchesLabel = (node) => {
+            const { title, text } = labelOf(node);
+            return title === wantedLower || text === wantedLower;
+          };
+          const dropdown = [...document.querySelectorAll(".el-select-dropdown__item, .el-select-dropdown__item span")];
           const nodes = dropdown.length ? dropdown : [...document.querySelectorAll("li, span, div, a, label")];
           const matches = nodes.filter((node) => {
-            if (norm(node) !== wantedLower) return false;
+            if (!matchesLabel(node)) return false;
             const box = node.getBoundingClientRect();
-            return box.width >= 8 && box.height >= 8 && box.height < 48 && box.width < 360;
+            return box.width >= 8 && box.height >= 8 && box.height < 80 && box.width < 800;
           });
-          matches.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+          matches.sort((a, b) => {
+            const rank = (node) => (node.classList && node.classList.contains("el-select-dropdown__item") ? 0 : 1);
+            if (rank(a) !== rank(b)) return rank(a) - rank(b);
+            return a.getBoundingClientRect().width - b.getBoundingClientRect().width;
+          });
           return matches[0] || null;
         }, label)
         .catch(() => null);
       const element = handle && handle.asElement ? handle.asElement() : null;
       if (!element) continue;
-      await element.click({ timeout: 5000 }).catch((error) => console.log("option click error", error.message));
+      await element.scrollIntoViewIfNeeded().catch(() => {});
+      await element.click({ force: true, timeout: 5000 }).catch((error) => console.log("option click error", error.message));
       console.log("option", label);
       return true;
     }
@@ -93,14 +106,13 @@ async function chooseOption(page, label) {
   const seen = [];
   for (const frame of await frames(page)) {
     const rows = await frame
-      .evaluate(() => [...document.querySelectorAll("li, span, div, a")]
-        .filter((node) => {
-          const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+      .evaluate(() => [...document.querySelectorAll(".el-select-dropdown__item")]
+        .slice(0, 40)
+        .map((node) => {
           const box = node.getBoundingClientRect();
-          return text && text.length <= 40 && node.childElementCount === 0 && box.height >= 10 && box.height <= 36 && box.width >= 8;
-        })
-        .slice(0, 50)
-        .map((node) => (node.innerText || "").replace(/\s+/g, " ").trim()))
+          const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+          return `${node.getAttribute("title") || ""} | ${text} | ${Math.round(box.width)}x${Math.round(box.height)}`;
+        }))
       .catch(() => []);
     seen.push(...rows);
   }
