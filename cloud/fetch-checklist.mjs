@@ -344,6 +344,65 @@ async function clickFilterFunnel(page) {
   return false;
 }
 
+async function removeDateChip(page) {
+  for (const frame of await frames(page)) {
+    const handle = await frame
+      .evaluateHandle(() => {
+        const chips = [...document.querySelectorAll("span, div, a, li")].filter((node) => {
+          const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+          if (!/20\d{2}-\d{2}-\d{2}/.test(text) || !/~/.test(text)) return false;
+          const box = node.getBoundingClientRect();
+          return box.width >= 80 && box.width <= 420 && box.height >= 12 && box.height <= 48;
+        });
+        chips.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+        const chip = chips[0];
+        if (!chip) return null;
+        const closer = [...chip.querySelectorAll("i, svg, span, em, button")].reverse().find((node) => {
+          const box = node.getBoundingClientRect();
+          return box.width >= 6 && box.width <= 24 && box.height >= 6 && box.height <= 24;
+        });
+        return closer || null;
+      })
+      .catch(() => null);
+    const element = handle && handle.asElement ? handle.asElement() : null;
+    if (!element) continue;
+    await element.click({ timeout: 5000, force: true }).catch((error) => console.log("date chip click", error.message));
+    console.log("removed create-time chip");
+    return true;
+  }
+  console.log("create-time chip was not found");
+  return false;
+}
+
+async function clickOptionsFilter(page) {
+  for (const frame of await frames(page)) {
+    const handle = await frame
+      .evaluateHandle(() => {
+        const nodes = [...document.querySelectorAll("button, a, span, div")].filter((node) => {
+          const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+          if (text !== "Filter") return false;
+          const box = node.getBoundingClientRect();
+          if (box.width < 8 || box.height < 8 || box.width > 120 || box.height > 40) return false;
+          let parent = node.parentElement;
+          for (let depth = 0; depth < 5 && parent; depth += 1) {
+            if (/Filter Options/i.test((parent.innerText || "").slice(0, 800))) return true;
+            parent = parent.parentElement;
+          }
+          return false;
+        });
+        nodes.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+        return nodes[0] || null;
+      })
+      .catch(() => null);
+    const element = handle && handle.asElement ? handle.asElement() : null;
+    if (!element) continue;
+    await element.click({ timeout: 5000 }).catch((error) => console.log("options filter click", error.message));
+    console.log("clicked options filter");
+    return true;
+  }
+  return false;
+}
+
 async function clickApplyFilter(page) {
   for (const frame of await frames(page)) {
     const clicked = await frame
@@ -762,7 +821,17 @@ try {
   await page.waitForTimeout(4000);
   await shot(page, "02-filtered.png");
 
-  await waitForGrid(page);
+  let grid = await waitForGrid(page);
+  if (grid !== "rows") {
+    if (await removeDateChip(page)) {
+      await page.waitForTimeout(1500);
+      await clickOptionsFilter(page);
+      await page.waitForTimeout(5000);
+      await shot(page, "02-refiltered.png");
+      grid = await waitForGrid(page);
+    }
+  }
+  if (grid !== "rows") throw new Error("No checklist rows matched this month");
   if (!(await clickRealText(page, "Export Checklist as Excel"))) throw new Error("Export Checklist as Excel was not found");
   let confirmed = 0;
   let quiet = 0;
