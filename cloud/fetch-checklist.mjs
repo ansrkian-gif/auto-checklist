@@ -257,14 +257,34 @@ try {
   }
   await page.waitForTimeout(2500);
 
-  if (!(await clickText(page, /^Filter$/))) {
+  let openedFilter = false;
+  for (let attempt = 0; attempt < 8 && !openedFilter; attempt += 1) {
     for (const frame of await frames(page)) {
-      await frame.locator("[class*='filter' i], [title*='filter' i]").first().click({ timeout: 3000 }).catch(() => {});
+      const hit = await frame
+        .evaluate(() => {
+          const nodes = [...document.querySelectorAll("button, i, span, a, div, svg")];
+          const template = nodes.find((node) => (node.innerText || "").trim() === "Template");
+          if (!template) return "";
+          const band = template.getBoundingClientRect();
+          const funnel = nodes
+            .map((node) => ({ node, box: node.getBoundingClientRect() }))
+            .filter(({ box }) => box.width >= 10 && box.width <= 48 && box.height >= 10 && box.height <= 48)
+            .filter(({ box }) => box.right <= band.left + 4 && Math.abs(box.top - band.top) < 24)
+            .sort((a, b) => b.box.right - a.box.right)[0];
+          if (!funnel) return "";
+          funnel.node.click();
+          return "funnel";
+        })
+        .catch(() => "");
+      if (hit) {
+        console.log("clicked filter funnel");
+        break;
+      }
     }
+    await page.waitForTimeout(1000);
+    openedFilter = await openSelect(page, "Task Type");
   }
-  await page.waitForTimeout(1000);
-
-  if (!(await openSelect(page, "Task Type"))) throw new Error("Task Type dropdown was not found");
+  if (!openedFilter) throw new Error("Task Type dropdown was not found");
   if (!(await chooseOption(page, "PM"))) throw new Error("PM option was not found");
   await page.waitForTimeout(400);
 
