@@ -239,7 +239,22 @@ try {
   }
   await shot(page, "01-after-login.png");
 
-  if (!(await clickText(page, /All Tasks/))) throw new Error("All Tasks was not found");
+  const opened = Date.now();
+  let foundTasks = false;
+  while (Date.now() - opened < 90000) {
+    await clickText(page, /^Console$/);
+    if (await clickText(page, /All Tasks/)) {
+      foundTasks = true;
+      break;
+    }
+    await page.waitForTimeout(3000);
+  }
+  if (!foundTasks) {
+    const urls = page.frames().map((frame) => frame.url());
+    fs.writeFileSync(path.join(__dirname, "frames.txt"), urls.join("\n"));
+    console.log("frames", urls.join(" | "));
+    throw new Error("All Tasks was not found");
+  }
   await page.waitForTimeout(2500);
 
   if (!(await clickText(page, /^Filter$/))) {
