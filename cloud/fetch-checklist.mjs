@@ -259,14 +259,20 @@ try {
 
   let openedFilter = false;
   for (let attempt = 0; attempt < 4 && !openedFilter; attempt += 1) {
+    let clickedFunnel = false;
     for (const frame of await frames(page)) {
       const point = await frame
         .evaluate(() => {
-          const leaves = [...document.querySelectorAll("body *")].filter((node) => node.children.length === 0);
-          const template = leaves.find((node) => (node.textContent || "").trim() === "Template");
+          const candidates = [...document.querySelectorAll("body *")].filter((node) => {
+            const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+            if (text !== "Template") return false;
+            const box = node.getBoundingClientRect();
+            return box.width >= 8 && box.width <= 180 && box.height >= 8 && box.height <= 60;
+          });
+          candidates.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+          const template = candidates[0];
           if (!template) return null;
           const band = template.getBoundingClientRect();
-          if (band.width < 2 || band.height < 2) return null;
           return { x: band.left - 18, y: band.top + band.height / 2 };
         })
         .catch(() => null);
@@ -283,8 +289,10 @@ try {
       }
       await page.mouse.click(originX + point.x, originY + point.y);
       console.log("clicked filter funnel", Math.round(originX + point.x), Math.round(originY + point.y));
+      clickedFunnel = true;
       break;
     }
+    if (!clickedFunnel) console.log("template label not found", attempt);
     await page.waitForTimeout(1500);
     openedFilter = await openSelect(page, "Task Type");
   }
