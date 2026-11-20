@@ -348,26 +348,53 @@ async function removeDateChip(page) {
   for (const frame of await frames(page)) {
     const handle = await frame
       .evaluateHandle(() => {
-        const chips = [...document.querySelectorAll("span, div, a, li")].filter((node) => {
-          const text = (node.innerText || "").replace(/\s+/g, " ").trim();
-          if (!/20\d{2}-\d{2}-\d{2}/.test(text) || !/~/.test(text)) return false;
+        const chips = [...document.querySelectorAll("span, div, a, li, input")].filter((node) => {
+          const text = ((node.value || node.innerText || "")).replace(/\s+/g, " ").trim();
+          if (!/20\d{2}-\d{2}-\d{2}/.test(text) || text.length > 80) return false;
+          if (/Filter Options|Project|Task ID/i.test(text)) return false;
           const box = node.getBoundingClientRect();
-          return box.width >= 80 && box.width <= 420 && box.height >= 12 && box.height <= 48;
+          return box.width >= 40 && box.width <= 520 && box.height >= 10 && box.height <= 52;
         });
         chips.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
         const chip = chips[0];
-        if (!chip) return null;
-        const closer = [...chip.querySelectorAll("i, svg, span, em, button")].reverse().find((node) => {
+        if (!chip) {
+          const sample = [...document.querySelectorAll("body *")]
+            .filter((node) => /20\d{2}/.test(node.innerText || node.value || "") && ((node.innerText || node.value || "").length < 90))
+            .slice(0, 6)
+            .map((node) => {
+              const box = node.getBoundingClientRect();
+              return `${node.tagName} ${Math.round(box.width)}x${Math.round(box.height)} ${(node.innerText || node.value || "").replace(/\s+/g, " ").trim().slice(0, 70)}`;
+            });
+          const marker = document.createElement("meta");
+          marker.setAttribute("data-ows-chip-sample", sample.join(" || ") || "none");
+          return marker;
+        }
+        const host = chip.closest(".el-tag, .ant-tag, .tag, .filter-item") || chip.parentElement || chip;
+        const closer = [...host.querySelectorAll("i, svg, span, em, button")].reverse().find((node) => {
           const box = node.getBoundingClientRect();
-          return box.width >= 6 && box.width <= 24 && box.height >= 6 && box.height <= 24;
+          return box.width >= 6 && box.width <= 28 && box.height >= 6 && box.height <= 28;
         });
-        return closer || null;
+        return closer || host;
       })
       .catch(() => null);
     const element = handle && handle.asElement ? handle.asElement() : null;
     if (!element) continue;
-    await element.click({ timeout: 5000, force: true }).catch((error) => console.log("date chip click", error.message));
-    console.log("removed create-time chip");
+    const sample = await element.getAttribute("data-ows-chip-sample").catch(() => "");
+    if (sample) {
+      console.log("date chip sample", sample);
+    } else {
+      await element.click({ timeout: 5000, force: true }).catch((error) => console.log("date chip click", error.message));
+      console.log("removed create-time chip");
+      return true;
+    }
+    const chip = frame.getByText(/20\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2}/).first();
+    const visible = await chip.waitFor({ state: "visible", timeout: 1500 }).then(() => true).catch(() => false);
+    if (!visible) continue;
+    const box = await chip.boundingBox().catch(() => null);
+    if (!box || box.width < 40 || box.width > 560 || box.height > 52) continue;
+    console.log("date chip box", Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height));
+    await page.mouse.click(box.x + box.width - 10, box.y + box.height / 2);
+    console.log("removed create-time chip by position");
     return true;
   }
   console.log("create-time chip was not found");
