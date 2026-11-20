@@ -693,6 +693,36 @@ function rowIsNewExport(rowText) {
   return Math.abs(Date.now() - rowTime) < 20 * 60 * 1000;
 }
 
+async function fillPrimaryKey(page, key) {
+  for (const frame of await everyFrame(page)) {
+    const filled = await frame
+      .evaluate((wanted) => {
+        const labels = [...document.querySelectorAll("span, label, div")].filter((node) => (node.innerText || "").replace(/\s+/g, " ").trim() === "Primary Key");
+        labels.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+        const label = labels[0];
+        if (!label) return "";
+        let parent = label.parentElement;
+        let input = null;
+        for (let depth = 0; depth < 5 && parent && !input; depth += 1) {
+          input = [...parent.querySelectorAll("input")].find((node) => {
+            const box = node.getBoundingClientRect();
+            return box.width > 40 && box.height > 10;
+          });
+          parent = parent.parentElement;
+        }
+        if (!input) return "";
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(input, wanted);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        return "ok";
+      }, key)
+      .catch(() => "");
+    if (filled) return true;
+  }
+  return false;
+}
+
 async function downloadFirstExport(page, knownKey = "") {
   let savedFromResponse = false;
   page.context().on("response", async (response) => {
@@ -710,6 +740,8 @@ async function downloadFirstExport(page, knownKey = "") {
   let targetKey = knownKey;
   const limit = knownKey ? 40 : 360;
   for (let attempt = 0; attempt < limit && !clicked; attempt += 1) {
+    if (knownKey && attempt === 0) console.log("primary key", (await fillPrimaryKey(page, knownKey)) ? "filled" : "not found");
+    if (knownKey && attempt > 0) await fillPrimaryKey(page, knownKey);
     let refreshed = false;
     for (const frame of await everyFrame(page)) {
       const handle = await frame
@@ -775,25 +807,30 @@ async function downloadFirstExport(page, knownKey = "") {
       if (processing || /Downloaded/i.test(rowText) || !ready) continue;
       await frame.evaluate((key) => {
         document.querySelectorAll("[data-ows-dl]").forEach((node) => node.removeAttribute("data-ows-dl"));
-        const dataRow = [...document.querySelectorAll("tr")].find((tr) => (tr.innerText || "").includes(key));
+        const dataRow = [...document.querySelectorAll("tr")].filter((tr) => {
+          if (!(tr.innerText || "").includes(key)) return false;
+          const rec = tr.getBoundingClientRect();
+          return rec.height > 12 && rec.width > 80 && rec.top > 40 && rec.top < window.innerHeight;
+        }).sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0];
         if (!dataRow) return;
         const top = dataRow.getBoundingClientRect().top;
-        const aligned = [...document.querySelectorAll("i, svg, a, button")].filter((node) => {
+        const aligned = [...document.querySelectorAll("i, svg, a, button, span, em")].filter((node) => {
           const rec = node.getBoundingClientRect();
-          if (rec.width < 8 || rec.height < 8 || rec.width > 40 || rec.height > 40) return false;
-          return Math.abs(rec.top - top) < 22;
+          if (rec.width < 6 || rec.height < 6 || rec.width > 36 || rec.height > 36) return false;
+          return Math.abs(rec.top + rec.height / 2 - (top + dataRow.getBoundingClientRect().height / 2)) < 24 && rec.left > 400;
         });
         aligned.sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left);
         aligned.slice(0, 4).forEach((node, index) => node.setAttribute("data-ows-dl", String(index)));
       }, targetKey).catch(() => {});
       const icons = frame.locator("[data-ows-dl]");
       const iconCount = await icons.count().catch(() => 0);
+      console.log("download icons", iconCount);
       for (let index = 0; index < iconCount; index += 1) {
         const icon = icons.nth(index);
         const mark = await icon.evaluate((node) => `${node.className || ""} ${node.getAttribute("title") || ""} ${node.getAttribute("aria-label") || ""}`).catch(() => "");
         console.log("icon", index, mark.slice(0, 120));
       }
-      for (let index = iconCount - 1; index >= 0; index -= 1) {
+      for (let index = 0; index < iconCount && !clicked; index += 1) {
         downloadPromise = waitForAnyDownload(page.context());
         await icons.nth(index).click({ timeout: 8000, force: true }).catch((error) => console.log("download click error", error.message));
         await page.waitForTimeout(800);
