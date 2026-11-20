@@ -401,6 +401,39 @@ async function removeDateChip(page) {
   return false;
 }
 
+async function clearCreateTime(page) {
+  for (const frame of await frames(page)) {
+    const handle = await frame
+      .evaluateHandle(() => {
+        const nodes = [...document.querySelectorAll("button, a, span, div")].filter((node) => {
+          const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+          if (text !== "Clear") return false;
+          const box = node.getBoundingClientRect();
+          if (box.width < 8 || box.height < 8 || box.width > 140 || box.height > 40) return false;
+          let parent = node.parentElement;
+          for (let depth = 0; depth < 6 && parent; depth += 1) {
+            if (/Filter Options/i.test((parent.innerText || "").slice(0, 900))) return true;
+            parent = parent.parentElement;
+          }
+          return false;
+        });
+        nodes.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+        return nodes[0] || null;
+      })
+      .catch(() => null);
+    const element = handle && handle.asElement ? handle.asElement() : null;
+    if (!element) continue;
+    await element.click({ timeout: 5000 }).catch((error) => console.log("clear create time click", error.message));
+    console.log("cleared create time");
+    await page.waitForTimeout(800);
+    const note = await dialogText(page);
+    if (note && /confirm|clear/i.test(note)) await clickDialogButton(page, ["Confirm", "OK", "Yes"]);
+    return true;
+  }
+  console.log("create time clear was not found");
+  return false;
+}
+
 async function clickOptionsFilter(page) {
   for (const frame of await frames(page)) {
     const handle = await frame
@@ -806,6 +839,8 @@ try {
     throw new Error("All Tasks was not found");
   }
   await page.waitForTimeout(2500);
+  await clearCreateTime(page);
+  await page.waitForTimeout(1200);
 
   let openedFilter = await labelVisible(page, "Task Type");
   if (!openedFilter) {
