@@ -2,6 +2,15 @@ name: Daily checklist
 
 on:
   workflow_dispatch:
+    inputs:
+      from:
+        description: Complete time from
+        required: false
+        default: ""
+      to:
+        description: Complete time to
+        required: false
+        default: ""
   schedule:
     - cron: "30 3 * * *"
 
@@ -27,13 +36,25 @@ jobs:
           OWS_URL: ${{ secrets.OWS_URL }}
           OWS_USER: ${{ secrets.OWS_USER }}
           OWS_PASS: ${{ secrets.OWS_PASS }}
+          OWS_FROM: ${{ inputs.from }}
+          OWS_TO: ${{ inputs.to }}
         run: node fetch-checklist.mjs
       - name: Build shelter page
         env:
           DASHBOARD_PIN: ${{ secrets.DASHBOARD_PIN }}
+          OWS_FROM: ${{ inputs.from }}
+          OWS_TO: ${{ inputs.to }}
         run: |
           node cloud/build-dashboard.mjs cloud/checklist.zip
           node -e "const fs=require('fs'); const pin=process.env.DASHBOARD_PIN||''; fs.writeFileSync('dashboard/pin.js','window.DASHBOARD_PIN='+JSON.stringify(pin)+';\n');"
+      - name: Upload checklist file
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checklist
+          path: |
+            cloud/checklist.zip
+            dashboard/sites.js
       - name: Upload screenshots if download failed
         if: failure()
         uses: actions/upload-artifact@v4

@@ -258,16 +258,34 @@ try {
   await page.waitForTimeout(2500);
 
   let openedFilter = false;
-  for (let attempt = 0; attempt < 6 && !openedFilter; attempt += 1) {
+  for (let attempt = 0; attempt < 4 && !openedFilter; attempt += 1) {
     for (const frame of await frames(page)) {
-      const template = frame.getByText("Template", { exact: true }).first();
-      const box = await template.boundingBox().catch(() => null);
-      if (!box) continue;
-      await page.mouse.click(Math.max(4, box.x - 22), box.y + box.height / 2);
-      console.log("clicked filter funnel", Math.round(box.x), Math.round(box.y));
+      const point = await frame
+        .evaluate(() => {
+          const leaves = [...document.querySelectorAll("body *")].filter((node) => node.children.length === 0);
+          const template = leaves.find((node) => (node.textContent || "").trim() === "Template");
+          if (!template) return null;
+          const band = template.getBoundingClientRect();
+          if (band.width < 2 || band.height < 2) return null;
+          return { x: band.left - 18, y: band.top + band.height / 2 };
+        })
+        .catch(() => null);
+      if (!point) continue;
+      let originX = 0;
+      let originY = 0;
+      if (frame !== page.mainFrame()) {
+        const owner = await frame.frameElement().catch(() => null);
+        const ownerBox = owner ? await owner.boundingBox().catch(() => null) : null;
+        if (ownerBox) {
+          originX = ownerBox.x;
+          originY = ownerBox.y;
+        }
+      }
+      await page.mouse.click(originX + point.x, originY + point.y);
+      console.log("clicked filter funnel", Math.round(originX + point.x), Math.round(originY + point.y));
       break;
     }
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(1500);
     openedFilter = await openSelect(page, "Task Type");
   }
   if (!openedFilter) {
