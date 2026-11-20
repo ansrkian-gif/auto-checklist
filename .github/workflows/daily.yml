@@ -1,0 +1,60 @@
+name: Daily checklist
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 3 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloud/package.json
+      - name: Install browser
+        working-directory: cloud
+        run: npm install && npx playwright install --with-deps chromium
+      - name: Download checklist
+        working-directory: cloud
+        env:
+          OWS_URL: ${{ secrets.OWS_URL }}
+          OWS_USER: ${{ secrets.OWS_USER }}
+          OWS_PASS: ${{ secrets.OWS_PASS }}
+        run: node fetch-checklist.mjs
+      - name: Build shelter page
+        env:
+          DASHBOARD_PIN: ${{ secrets.DASHBOARD_PIN }}
+        run: |
+          node cloud/build-dashboard.mjs cloud/checklist.zip
+          node -e "const fs=require('fs'); const pin=process.env.DASHBOARD_PIN||''; fs.writeFileSync('dashboard/pin.js','window.DASHBOARD_PIN='+JSON.stringify(pin)+';\n');"
+      - name: Upload screenshots if download failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checklist-debug
+          path: |
+            cloud/*.png
+            cloud/*.txt
+          if-no-files-found: ignore
+      - name: Publish phone page
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git clone --branch gh-pages --single-branch "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" _site
+          cp dashboard/index.html dashboard/pin-gate.js dashboard/pin.js dashboard/sites.js _site/
+          touch _site/.nojekyll
+          cd _site
+          git add index.html pin-gate.js pin.js sites.js .nojekyll
+          git diff --cached --quiet && echo "No page changes" && exit 0
+          git commit -m "Daily shelter checklist"
+          git push
