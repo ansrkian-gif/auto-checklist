@@ -831,19 +831,26 @@ async function downloadFirstExport(page, knownKey = "") {
         console.log("icon", index, mark.slice(0, 120));
       }
       for (let index = 0; index < iconCount && !clicked; index += 1) {
+        const icon = icons.nth(index);
+        const mark = await icon.evaluate((node) => `${node.className || ""} ${node.getAttribute("title") || ""}`).catch(() => "");
+        if (!/icon_download/.test(mark)) continue;
+        console.log("click download");
         downloadPromise = waitForAnyDownload(page.context());
-        await icons.nth(index).click({ timeout: 8000, force: true }).catch((error) => console.log("download click error", error.message));
-        await page.waitForTimeout(800);
-        const note = await dialogText(page);
-        console.log("dialog text", note);
-        if (!note) continue;
-        if (/delete this record/i.test(note)) {
-          await clickDialogButton(page, ["Cancel"]);
-          continue;
+        const box = await icon.boundingBox().catch(() => null);
+        if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        else await icon.click({ timeout: 8000, force: true }).catch((error) => console.log("download click error", error.message));
+        for (let wait = 0; wait < 8 && !clicked; wait += 1) {
+          await page.waitForTimeout(500);
+          const note = await dialogText(page);
+          if (!note) continue;
+          console.log("dialog text", note.slice(0, 160));
+          if (/delete this record/i.test(note)) {
+            await clickDialogButton(page, ["Cancel"]);
+            break;
+          }
+          await clickDialogButton(page, ["Confirm", "OK", "Yes"]);
+          clicked = true;
         }
-        await clickDialogButton(page, ["Confirm", "OK"]);
-        clicked = true;
-        break;
       }
       if (clicked) break;
     }
