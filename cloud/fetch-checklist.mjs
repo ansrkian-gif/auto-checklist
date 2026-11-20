@@ -726,13 +726,17 @@ async function fillPrimaryKey(page, key) {
 async function downloadFirstExport(page, knownKey = "") {
   let savedFromResponse = false;
   page.context().on("response", async (response) => {
+    const type = response.headers()["content-type"] || "";
     const disposition = response.headers()["content-disposition"] || "";
-    if (!/attachment/i.test(disposition) || savedFromResponse) return;
+    const url = response.url();
+    if (savedFromResponse) return;
+    if (!/attachment|zip|excel|spreadsheet|octet-stream|download/i.test(`${type} ${disposition} ${url}`)) return;
     const body = await response.body().catch(() => null);
+    console.log("response", body ? body.length : 0, type.slice(0, 40), url.slice(0, 100));
     if (!body || body.length < 1000) return;
     fs.writeFileSync(outFile, body);
     savedFromResponse = true;
-    console.log("saved response", body.length, disposition.slice(0, 80));
+    console.log("saved response", body.length);
   });
   let lastText = "";
   let clicked = false;
