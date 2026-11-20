@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#12323c">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Shelter Size">
+  <title>Shelter Size</title>
+  <script src="pin.js"></script>
+  <script src="pin-gate.js"></script>
+  <script src="sites.js"></script>
+  <style>
+    :root {
+      --ink: #14222b;
+      --muted: #5c6b73;
+      --line: #e1e7ea;
+      --bg: #eef2f4;
+      --card: #ffffff;
+      --accent: #0b6e4f;
+      --header: #12323c;
+      --danger: #8d2f2f;
+      --shadow: 0 8px 24px rgba(18, 50, 60, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      font-size: 16px;
+    }
+
+    body {
+      min-height: 100vh;
+      padding-bottom: calc(24px + env(safe-area-inset-bottom));
+    }
+
+    header {
+      background: var(--header);
+      color: #fff;
+      padding: calc(18px + env(safe-area-inset-top)) 16px 20px;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 1.45rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    header p {
+      margin: 6px 0 0;
+      color: #c5d4da;
+      font-size: 0.95rem;
+    }
+
+    main {
+      width: min(640px, 100%);
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    form {
+      display: grid;
+      gap: 10px;
+      margin-top: -28px;
+    }
+
+    label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+    }
+
+    input[type="search"] {
+      width: 100%;
+      height: 56px;
+      border: 0;
+      border-radius: 16px;
+      padding: 0 16px;
+      font-size: 1.05rem;
+      color: var(--ink);
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    input[type="search"]:focus {
+      outline: 3px solid rgba(11, 110, 79, 0.35);
+    }
+
+    button {
+      height: 52px;
+      border: 0;
+      border-radius: 14px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 1.05rem;
+      font-weight: 650;
+    }
+
+    button:active { background: #084e39; }
+
+    .status {
+      margin: 16px 2px 8px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .cards { display: grid; gap: 12px; }
+
+    article {
+      background: var(--card);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      padding: 16px 16px 8px;
+    }
+
+    .site {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .site strong {
+      font-size: 1.35rem;
+      letter-spacing: -0.03em;
+    }
+
+    .site span {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    dl { margin: 0; }
+
+    .row {
+      display: grid;
+      grid-template-columns: 7.4rem 1fr;
+      gap: 8px;
+      padding: 12px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    dt {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.35rem;
+    }
+
+    dd {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 650;
+      line-height: 1.35rem;
+      overflow-wrap: anywhere;
+    }
+
+    .size dd { font-size: 1.25rem; color: var(--accent); }
+
+    .empty, .miss {
+      background: var(--card);
+      border-radius: 18px;
+      padding: 22px 16px;
+      box-shadow: var(--shadow);
+      color: var(--muted);
+    }
+
+    .miss { color: var(--danger); }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .chips button {
+      height: 42px;
+      padding: 0 14px;
+      border-radius: 999px;
+      background: #fff;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      font-size: 0.95rem;
+      font-weight: 650;
+      box-shadow: none;
+    }
+
+    @media (min-width: 720px) {
+      header { padding-left: 24px; padding-right: 24px; }
+      main { padding-top: 20px; }
+      form { grid-template-columns: 1fr 140px; align-items: center; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Shelter Size</h1>
+    <p id="range">Enter a site ID to see the checklist details.</p>
+  </header>
+  <main>
+    <form id="lookup">
+      <label for="site">Site ID</label>
+      <input id="site" name="site" type="search" inputmode="text" autocomplete="off" autocapitalize="characters" placeholder="Site ID, for example 2737" enterkeyhint="search">
+      <button type="submit">Check</button>
+    </form>
+    <p class="status" id="status"></p>
+    <div id="results"></div>
+  </main>
+  <script>
+    const SITES = window.SITES || [];
+    const range = document.querySelector("#range");
+    if (window.CHECKLIST_LABEL) range.textContent = window.CHECKLIST_LABEL;
+
+    const form = document.querySelector("#lookup");
+    const input = document.querySelector("#site");
+    const status = document.querySelector("#status");
+    const results = document.querySelector("#results");
+
+    function norm(value) {
+      return String(value || "").trim().toLowerCase();
+    }
+
+    function findSites(query) {
+      const needle = norm(query);
+      if (!needle) return [];
+      const exact = SITES.filter((site) => norm(site.siteId) === needle);
+      if (exact.length) return exact;
+      return SITES.filter((site) => norm(site.siteId).includes(needle));
+    }
+
+    function card(site) {
+      return `
+        <article>
+          <div class="site">
+            <strong>${site.siteId}</strong>
+            <span>Site ID</span>
+          </div>
+          <dl>
+            <div class="row"><dt>Task ID</dt><dd>${site.taskId}</dd></div>
+            <div class="row"><dt>Operate Time</dt><dd>${site.operateTime}</dd></div>
+            <div class="row"><dt>Shelter Type</dt><dd>${site.shelterType}</dd></div>
+            <div class="row size"><dt>Shelter Size</dt><dd>${site.shelterSize}</dd></div>
+          </dl>
+        </article>`;
+    }
+
+    function showSites() {
+      const chips = SITES
+        .slice()
+        .sort((a, b) => a.siteId.localeCompare(b.siteId, undefined, { numeric: true }))
+        .map((site) => `<button type="button" data-site="${site.siteId}">${site.siteId}</button>`)
+        .join("");
+      status.textContent = `${SITES.length} sites in this checklist`;
+      results.innerHTML = `<div class="chips">${chips}</div>`;
+    }
+
+    function showQuery(query) {
+      const matches = findSites(query);
+      if (!matches.length) {
+        status.textContent = "No match";
+        results.innerHTML = `<div class="miss">No checklist row for site ${query.trim()}.</div>`;
+        return;
+      }
+      status.textContent = matches.length === 1 ? "1 site" : `${matches.length} sites`;
+      results.innerHTML = `<div class="cards">${matches.map(card).join("")}</div>`;
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const query = input.value.trim();
+      if (!query) {
+        showSites();
+        return;
+      }
+      showQuery(query);
+    });
+
+    results.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-site]");
+      if (!button) return;
+      input.value = button.dataset.site;
+      showQuery(button.dataset.site);
+      input.focus();
+    });
+
+    showSites();
+  </script>
+</body>
+</html>
