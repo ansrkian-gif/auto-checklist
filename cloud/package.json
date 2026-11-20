@@ -1,0 +1,9 @@
+{
+  "name": "auto-checklist-cloud",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "playwright": "^1.54.2",
+    "xlsx": "^0.18.5"
+  }
+}

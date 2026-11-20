@@ -1,0 +1,9 @@
+node_modules/
+cloud/checklist.zip
+cloud/checklist.xlsx
+cloud/*.png
+cloud/*.txt
+dashboard/pin.js
+extracted/
+*.mp4
+*.zip

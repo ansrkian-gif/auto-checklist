@@ -1,0 +1,15 @@
+Phone page (stays up when this PC is off):
+https://ansrkian-gif.github.io/auto-checklist/
+PIN 4221
+
+The page refreshes by itself every day at 06:30 Kuwait time.
+It downloads the previous day's Closed and Completed PM checklist for
+Kuwait Ooredoo FMO, title OGK Active and Passive, then updates Shelter Size.
+
+One-time secrets, same login as PM H1:
+https://github.com/ansrkian-gif/auto-checklist/settings/secrets/actions
+OWS_USER
+OWS_PASS
+DASHBOARD_PIN = 4221
+
+Do not put the TeleOWS password in this folder or in chat.
