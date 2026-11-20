@@ -206,14 +206,48 @@ async function closeOpenList(page) {
   return false;
 }
 
-async function fillPlaceholder(page, placeholder, value) {
+async function fillRow(page, label, value) {
   for (const frame of await frames(page)) {
-    const field = frame.locator(`input[placeholder="${placeholder}"]`).first();
-    if (!(await field.isVisible().catch(() => false))) continue;
-    await field.fill(value);
-    console.log("filled", placeholder);
+    const handle = await frame
+      .evaluateHandle((wanted) => {
+        const textOf = (node) => (node.innerText || "").replace(/\s+/g, " ").trim();
+        const labels = [...document.querySelectorAll("label, span, div, td")].filter((node) => {
+          const text = textOf(node);
+          if (text !== wanted && text !== `${wanted}:`) return false;
+          const box = node.getBoundingClientRect();
+          return box.width >= 8 && box.width <= 220 && box.height >= 8 && box.height <= 40 && node.childElementCount <= 2;
+        });
+        labels.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+        const lab = labels[0];
+        if (!lab) return null;
+        const band = lab.getBoundingClientRect();
+        const mid = band.top + band.height / 2;
+        const inputs = [...document.querySelectorAll("input, textarea")].filter((node) => {
+          const box = node.getBoundingClientRect();
+          if (box.width < 40 || box.height < 12 || box.height > 80) return false;
+          const cy = box.top + box.height / 2;
+          if (Math.abs(cy - mid) > 20) return false;
+          if (box.left < band.right - 10) return false;
+          return true;
+        });
+        inputs.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+        return inputs[0] || null;
+      }, label)
+      .catch(() => null);
+    const element = handle && handle.asElement ? handle.asElement() : null;
+    if (!element) continue;
+    await element.fill(value);
+    console.log("filled", label);
     return true;
   }
+  const placeholders = [];
+  for (const frame of await frames(page)) {
+    const rows = await frame
+      .evaluate(() => [...document.querySelectorAll("input, textarea")].slice(0, 20).map((node) => node.getAttribute("placeholder") || node.type || node.tagName))
+      .catch(() => []);
+    placeholders.push(...rows);
+  }
+  console.log("fields", placeholders.join(" | "));
   return false;
 }
 
@@ -562,7 +596,7 @@ try {
   await closeOpenList(page);
   await page.waitForTimeout(300);
 
-  if (!(await fillPlaceholder(page, "Title", "OGK Active and Passive"))) throw new Error("Title field was not found");
+  if (!(await fillRow(page, "Title", "OGK Active and Passive"))) throw new Error("Title field was not found");
   if (!(await clickText(page, /^More$/))) throw new Error("More was not found");
   await page.waitForTimeout(500);
   if (!(await fillCriteria(page, criteria))) throw new Error("Extended criteria box was not found");
