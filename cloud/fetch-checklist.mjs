@@ -532,9 +532,9 @@ async function loginIfNeeded(page) {
 
 function waitForAnyDownload(context) {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), 480000);
+    const timer = setTimeout(() => resolve(null), 90000);
     const attach = (openPage) => {
-      openPage.waitForEvent("download", { timeout: 480000 }).then((download) => {
+      openPage.waitForEvent("download", { timeout: 90000 }).then((download) => {
         clearTimeout(timer);
         resolve(download);
       }).catch(() => {});
@@ -550,7 +550,33 @@ async function everyFrame(page) {
   return found;
 }
 
+async function dialogText(page) {
+  for (const frame of await everyFrame(page)) {
+    const note = await frame
+      .evaluate(() => {
+        const box = [...document.querySelectorAll(".el-message-box, .el-dialog, [role='dialog']")].find((node) => {
+          const rec = node.getBoundingClientRect();
+          return rec.width > 40 && rec.height > 40;
+        });
+        return box ? (box.innerText || "").replace(/\s+/g, " ").trim().slice(0, 240) : "";
+      })
+      .catch(() => "");
+    if (note) return note;
+  }
+  return "";
+}
+
 async function downloadFirstExport(page) {
+  let savedFromResponse = false;
+  page.context().on("response", async (response) => {
+    const disposition = response.headers()["content-disposition"] || "";
+    if (!/attachment/i.test(disposition) || savedFromResponse) return;
+    const body = await response.body().catch(() => null);
+    if (!body || body.length < 1000) return;
+    fs.writeFileSync(outFile, body);
+    savedFromResponse = true;
+    console.log("saved response", body.length, disposition.slice(0, 80));
+  });
   let sawPending = false;
   let finishedStreak = 0;
   let lastText = "";
@@ -585,17 +611,35 @@ async function downloadFirstExport(page) {
       if (/Downloaded/i.test(rowText)) continue;
       if (rowText !== lastText) console.log("export row", rowText.replace(/\s+/g, " ").slice(0, 180));
       lastText = rowText;
-      const icon = row.locator("a, button, i, svg, span").last();
-      downloadPromise = waitForAnyDownload(page.context());
-      await icon.click({ timeout: 8000, force: true }).catch((error) => console.log("download click error", error.message));
-      clicked = true;
-      break;
+      const icons = row.locator("td").last().locator("i, svg, a, button");
+      const iconCount = await icons.count().catch(() => 0);
+      for (let index = 0; index < iconCount; index += 1) {
+        const icon = icons.nth(index);
+        const mark = await icon.evaluate((node) => `${node.className || ""} ${node.getAttribute("title") || ""} ${node.getAttribute("aria-label") || ""}`).catch(() => "");
+        console.log("icon", index, mark.slice(0, 120));
+      }
+      for (let index = iconCount - 1; index >= 0; index -= 1) {
+        downloadPromise = waitForAnyDownload(page.context());
+        await icons.nth(index).click({ timeout: 8000, force: true }).catch((error) => console.log("download click error", error.message));
+        await page.waitForTimeout(800);
+        const note = await dialogText(page);
+        console.log("dialog text", note);
+        if (!note) continue;
+        if (/delete this record/i.test(note)) {
+          await clickDialogButton(page, ["Cancel"]);
+          continue;
+        }
+        await clickDialogButton(page, ["Confirm", "OK"]);
+        clicked = true;
+        break;
+      }
+      if (clicked) break;
     }
     if (!clicked) await page.waitForTimeout(3000);
   }
   if (!clicked) return false;
-  await clickDialogButton(page, ["Confirm", "OK"]);
   const download = await downloadPromise;
+  if (savedFromResponse && fs.existsSync(outFile)) return true;
   if (!download) return false;
   await download.saveAs(outFile);
   console.log("saved", outFile);
